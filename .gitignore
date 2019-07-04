@@ -1,0 +1,6 @@
+vib_levels
+gmon.out
+fort.*
+*.agr
+.*.swp
+*~
