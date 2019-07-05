@@ -8,8 +8,6 @@ PROGRAM vib_levels
   ! PLR 05.2019                                                 !
   !-------------------------------------------------------------!
   IMPLICIT NONE
-  ! HACK - effective mass (global variable)
-  DOUBLE PRECISION SQRT_RMASS, INV_SQRT_RMASS
 
   call main()
 
@@ -25,9 +23,17 @@ CONTAINS
     ! Data in file.
     INTEGER nxy
     DOUBLE PRECISION, ALLOCATABLE :: xy_x(:), xy_y(:), xy_dy(:)
-    ! Fit variables.
-    INTEGER exp_order
-    DOUBLE PRECISION fit_x0, fit_y0, xleft, xright, xmin, ymin
+    ! System definitions and variables for fit to potential.
+    INTEGER norder_v
+    DOUBLE PRECISION ucentre, omega, rmass, fit_x0, fit_y0, xleft, xright, &
+       &xmin, ymin
+    DOUBLE PRECISION, ALLOCATABLE :: vcoeff_nat(:), vcoeff(:)
+    ! Variables defining ground state of Hamiltonian.
+    INTEGER, PARAMETER :: MAX_NORDER = 200 ! NB, dsyev* hang at norder=202
+    DOUBLE PRECISION, PARAMETER :: VIRIAL_TOL = 1.d-9
+    INTEGER norder
+    DOUBLE PRECISION e0, vratio
+    DOUBLE PRECISION, ALLOCATABLE :: orbcoeff(:)
     ! Random sampling and objects to evaluate.
     INTEGER irandom, iexpval
     INTEGER, PARAMETER :: nsample = 100, nexpval = 8
@@ -37,25 +43,13 @@ CONTAINS
        &'Delta2         ',&
        &'Delta3         ',&
        &'Virial ratio   ',&
-       &'Expansion order',&
+       &'Orb. exp. order',&
        &'r of minimum   ',&
        &'Minimum energy '/)
     DOUBLE PRECISION mean, var
     DOUBLE PRECISION, ALLOCATABLE :: sample_y(:), fmc(:,:), fatx(:,:), &
        &fplot(:,:), fmeanx(:), w_one(:)
-    ! System definition.
-    INTEGER norder_v
-    DOUBLE PRECISION, ALLOCATABLE :: vcoeff_nat(:), vcoeff(:)
-    DOUBLE PRECISION ucentre, omega, rmass
-    ! Variables defining ground state of Hamiltonian.
-    INTEGER norder
-    DOUBLE PRECISION e0, vratio
-    DOUBLE PRECISION, ALLOCATABLE :: orbcoeff(:)
-    ! The wave function converges at a given expansion order if its
-    ! associated virial ratio is within VIRIAL_TOL of unity.
-    INTEGER, PARAMETER :: MAX_NORDER = 200 ! FIXME - dsyev* hang at norder=202
-    DOUBLE PRECISION, PARAMETER :: VIRIAL_TOL = 1.d-9
-    ! Variables for plotting solution to 1D Schroedinger equation.
+    ! Variables for plotting potential and eigenfunctions.
     INTEGER, PARAMETER :: PLOT_NPOINT = 200
     DOUBLE PRECISION, PARAMETER :: CDF_TOL = epsilon(1.d0)
     INTEGER ipoint, ixy, ipoly, iplot
@@ -63,7 +57,7 @@ CONTAINS
     DOUBLE PRECISION psix, plot_orb_scale_factor
     DOUBLE PRECISION, ALLOCATABLE :: all_eigval(:), all_eigvec(:,:), hbasis(:)
     ! Misc local variables.
-    CHARACTER(2048) line, fname
+    CHARACTER(2048) line, fname, pname
     INTEGER ncolumn, ierr
     DOUBLE PRECISION t1
     INTEGER, PARAMETER :: io=10
@@ -88,6 +82,7 @@ CONTAINS
     case default
       write(6,'(a)')'File "'//trim(fname)//'" contains '//trim(i2s(nxy))//&
          &' data lines.'
+      write(6,'()')
     end select
     if (ncolumn<3) call quit( 'File "'//trim(fname)//'" must contain &
        &at least 3 data columns.')
@@ -99,37 +94,49 @@ CONTAINS
     xright = maxval(xy_x)
 
     ! Get effective mass.
-    write(6,'(a)') 'Effective mass in Da (e.g., 0.5 for H2):'
+    write(6,'(a)') 'Effective mass in Da [e.g., 0.5 for H2; empty for 1 a.u.]:'
     read(5,'(a)',iostat=ierr) line
     if (ierr/=0) call quit()
     read(line,*,iostat=ierr) rmass
-    if (ierr/=0) rmass=0.5d0
-    ! Convert to a.u.
-    rmass = rmass*1822.888486209d0
-    ! Precompute global variables.
-    SQRT_RMASS = rmass !sqrt(rmass)
-    INV_SQRT_RMASS = 1.d0/SQRT_RMASS
+    if (ierr/=0) then
+      rmass=1.d0
+    else
+      if (rmass<=0.d0) call quit ('Mass must be positive.')
+      ! Convert to a.u.
+      rmass = rmass*1822.888486209d0
+    endif
+    write(6,'()')
 
     ! Get expansion order.
-    write(6,'(a)') 'Enter expansion order (e.g., 4 for 4th order polynomial):'
+    write(6,'(a)') 'Polynomial expansion order for potential [empty for 4 &
+       &(= quartic)]:'
     read(5,'(a)',iostat=ierr) line
     if (ierr/=0) call quit()
-    read(line,*,iostat=ierr) exp_order
-    if (ierr/=0) exp_order=4
     write(6,'()')
-    if (exp_order+1>nxy) call quit('Cannot have more parameters than data &
+    read(line,*,iostat=ierr) norder_v
+    if (ierr/=0) norder_v=4
+    if (norder_v+1>nxy) call quit('Cannot have more parameters than data &
        &points.')
+    if (norder_v+1==nxy) then
+      write(6,'(a)') 'WARNING: using the same number of parameters as points &
+         &is discouraged.'
+      write(6,'()')
+    endif
+    allocate (vcoeff_nat(0:norder_v), vcoeff(0:norder_v))
 
-    ! Loop over random points.
+    ! Get name of output plot file.
+    write(6,'(a)') 'Enter name *root* for plot files [empty to skip plot]:'
+    read(5,'(a)',iostat=ierr) pname
+    if (ierr/=0) pname=''
+    write(6,'()')
+
+    ! Perform Monte Carlo resample.
     allocate ( fmc(nsample,nexpval), fatx(nsample,nxy), &
        &fplot(nsample,PLOT_NPOINT) )
     do irandom = 1, nsample
       ! Generate random instance of data.
       sample_y = xy_y + gaussian_random_number(xy_dy)
       ! Perform fit.
-      ! FIXME - loop over norder_v?
-      norder_v = exp_order
-      allocate(vcoeff_nat(0:norder_v))
       call perform_fit (nxy, norder_v+1, xy_x-fit_x0, sample_y-fit_y0, &
          &vcoeff_nat, ierr)
       if (ierr/=0) call quit ('Could not perform fit.')
@@ -137,16 +144,16 @@ CONTAINS
       call find_fit_minimum (norder_v+1, vcoeff_nat, xleft-fit_x0, 0.d0, &
          &xright-fit_x0, xmin, ymin)
       ! Regularize problem and transform the potential into Hermite polynomial.
-      call obtain_ucentre_omega (norder_v, vcoeff_nat, 40, ucentre, omega)
-      allocate(vcoeff(0:norder_v))
+      call obtain_ucentre_omega (rmass, norder_v, vcoeff_nat, 40, ucentre, &
+         &omega)
       call transform_potential (norder_v, vcoeff_nat, ucentre, omega, vcoeff)
       ! Converge trial ground-state wave function with expansion order.
       do norder = max(norder_v,2), max(norder_v,2,MAX_NORDER)
         if (allocated(orbcoeff)) deallocate(orbcoeff, all_eigval, all_eigvec)
         allocate (orbcoeff(0:norder), all_eigval(0:norder), &
            &all_eigvec(0:norder,0:norder))
-        call get_ground_state (norder, norder_v, vcoeff, e0, orbcoeff, vratio, &
-           &all_eigval, all_eigvec)
+        call get_ground_state (rmass, norder, norder_v, vcoeff, e0, orbcoeff, &
+           &vratio, all_eigval, all_eigvec)
         if (abs(vratio-1.d0)<VIRIAL_TOL) exit
       enddo ! norder
       if (norder>MAX_NORDER) call quit &
@@ -172,7 +179,6 @@ CONTAINS
         fp = eval_poly (norder_v+1, vcoeff_nat, xp)
         fplot(irandom,ipoint) = fp+fit_y0
       enddo ! ipoint
-      deallocate (vcoeff_nat, vcoeff)
     enddo ! irandom
 
     ! Dummy weight vector.
@@ -193,8 +199,6 @@ CONTAINS
     do ixy = 1, nxy
       call characterize_dist(nsample,fatx(1,ixy),w_one,fmeanx(ixy))
     enddo ! ixy
-    norder_v = exp_order
-    allocate(vcoeff_nat(0:norder_v))
     call perform_fit (nxy, norder_v+1, xy_x-fit_x0, fmeanx-fit_y0, &
        &vcoeff_nat, ierr)
     if (ierr/=0) call quit ('Could not perform fit.')
@@ -207,16 +211,15 @@ CONTAINS
     write(6,'()')
 
     ! Solve in mean V(r).
-    call obtain_ucentre_omega (norder_v, vcoeff_nat, 40, ucentre, omega)
-    allocate(vcoeff(0:norder_v))
+    call obtain_ucentre_omega (rmass, norder_v, vcoeff_nat, 40, ucentre, omega)
     call transform_potential (norder_v, vcoeff_nat, ucentre, omega, vcoeff)
     ! Converge trial ground-state wave function with expansion order.
     do norder = max(norder_v,2), max(norder_v,2,MAX_NORDER)
       if (allocated(orbcoeff)) deallocate(orbcoeff, all_eigval, all_eigvec)
       allocate (orbcoeff(0:norder), all_eigval(0:norder), &
          &all_eigvec(0:norder,0:norder))
-      call get_ground_state (norder, norder_v, vcoeff, e0, orbcoeff, vratio, &
-         &all_eigval, all_eigvec)
+      call get_ground_state (rmass, norder, norder_v, vcoeff, e0, orbcoeff, &
+         &vratio, all_eigval, all_eigvec)
       if (abs(vratio-1.d0)<VIRIAL_TOL) exit
     enddo ! norder
     if (norder>MAX_NORDER) call quit &
@@ -230,9 +233,8 @@ CONTAINS
     ur = xr/sqrt(omega) - ucentre
 
     ! Make plot data file.
-    open(unit=io,file='plot/plot.dat',status='replace',iostat=ierr)
-    if (ierr/=0) call quit('Could not create plot/plot.dat.  Create plot &
-       &directory to get plots.')
+    open(unit=io,file=trim(pname)//'.dat',status='replace',iostat=ierr)
+    if (ierr/=0) call quit('Could not create '//trim(pname)//'.dat.')
     ! Plot original data.
     do ixy = 1, nxy
       write(io,'(3(1x,es20.12))') xy_x(ixy), xy_y(ixy), xy_dy(ixy)
@@ -288,9 +290,8 @@ CONTAINS
     close(io)
 
     ! Create gnuplot file.
-    open(unit=io,file='plot/plot.gpi',status='replace',iostat=ierr)
-    if (ierr/=0) call quit('Could not create plot/plot.gpi.  Create plot &
-       &directory to get plots.')
+    open(unit=io,file=trim(pname)//'.gpi',status='replace',iostat=ierr)
+    if (ierr/=0) call quit('Could not create '//trim(pname)//'.gpi.')
     write(io,'(a)')"set lmargin 9"
     write(io,'(a)')"set border lw 3"
     write(io,'(a)')"set xlabel '$r$ (a.u.)'"
@@ -316,8 +317,8 @@ CONTAINS
        &'plot.dat' index 0 using 1:2:3 w errorbars &
        &  lw 3 lc rgb '#000000' pt 7 ps 0.8 t ''"
     close(io)
-    write(6,'(a)')'Made gnuplot plot/plot.gpi file and plot/plot.dat &
-       &data file.'
+    write(6,'(a)')'Made gnuplot '//trim(pname)//'.gpi file and plain-text '//&
+       &trim(pname)//'.dat data file.'
     write(6,'()')
 
   END SUBROUTINE main
@@ -438,7 +439,8 @@ CONTAINS
   END SUBROUTINE read_file
 
 
-  SUBROUTINE obtain_ucentre_omega (norder_v, vcoeff_nat, norder, ucentre, omega)
+  SUBROUTINE obtain_ucentre_omega (rmass, norder_v, vcoeff_nat, norder, &
+     &ucentre, omega)
     !----------------------------------------------------------!
     ! Given the natural-polynomial coefficients of a potential !
     ! VCOEFF_NAT(0:NORDER_V), obtain the values of ucentre and !
@@ -447,7 +449,7 @@ CONTAINS
     !----------------------------------------------------------!
     IMPLICIT NONE
     INTEGER, INTENT(in) :: norder_v, norder
-    DOUBLE PRECISION, INTENT(in) :: vcoeff_nat(0:norder_v)
+    DOUBLE PRECISION, INTENT(in) :: rmass, vcoeff_nat(0:norder_v)
     DOUBLE PRECISION, INTENT(inout) :: ucentre, omega
     DOUBLE PRECISION, PARAMETER :: OMEGA_TOL = 1.d-9
     LOGICAL, PARAMETER :: SET_OMEGA_BY_X2 = .false.
@@ -463,11 +465,11 @@ CONTAINS
     ! * Scaling a potential V(u) by a multiplicative constant results in the
     !   same dimensionless potential v(x).
     ! * omega is the frequency for a harmonic potential.
-    omega_init = sqrt(2.d0)*SQRT_RMASS
+    omega_init = sqrt(2.d0)*rmass
     do iorder_v = norder_v, 2, -1
       if (mod(iorder_v,2)/=0) cycle
-      if (le_dble(vcoeff_nat(norder_v),0.d0)) cycle
-      omega_init = sqrt(2.d0)*SQRT_RMASS*&
+      if (le_dble(vcoeff_nat(iorder_v),0.d0)) cycle
+      omega_init = sqrt(2.d0)*rmass*&
          &vcoeff_nat(iorder_v)**(2.d0/dble(iorder_v+2))
     enddo ! iorder_v
 
@@ -482,7 +484,8 @@ CONTAINS
 
         ! Evaluate <x> at this omega.
         call transform_potential (norder_v, vcoeff_nat, ucentre, omega, vcoeff)
-        call get_ground_state (norder, norder_v, vcoeff, e0, orbcoeff, vratio)
+        call get_ground_state (rmass, norder, norder_v, vcoeff, e0, orbcoeff, &
+           &vratio)
         ucentre_prev = ucentre
         omega_prev = omega
         ucentre = ucentre_prev - &
@@ -504,7 +507,8 @@ CONTAINS
         ! * omega is the frequency for a harmonic potential.
         xv = omega_init
         call transform_potential (norder_v, vcoeff_nat, ucentre, xv, vcoeff)
-        call get_ground_state (norder, norder_v, vcoeff, e0, orbcoeff, vratio)
+        call get_ground_state (rmass, norder, norder_v, vcoeff, e0, orbcoeff, &
+           &vratio)
         if (MINIMIZE_E) then
           fv = e0*xv
         else
@@ -519,7 +523,8 @@ CONTAINS
         do
           xu = 0.9d0*xv
           call transform_potential (norder_v, vcoeff_nat, ucentre, xu, vcoeff)
-          call get_ground_state (norder, norder_v, vcoeff, e0, orbcoeff, vratio)
+          call get_ground_state (rmass, norder, norder_v, vcoeff, e0, &
+             &orbcoeff, vratio)
           if (MINIMIZE_E) then
             fu = e0*xu
           else
@@ -538,8 +543,8 @@ CONTAINS
             xw = 1.1d0*xv
             call transform_potential (norder_v, vcoeff_nat, ucentre, xw, &
                &vcoeff)
-            call get_ground_state (norder, norder_v, vcoeff, e0, orbcoeff, &
-               &vratio)
+            call get_ground_state (rmass, norder, norder_v, vcoeff, e0, &
+               &orbcoeff, vratio)
             if (MINIMIZE_E) then
               fw = e0*xw
             else
@@ -559,8 +564,8 @@ CONTAINS
           if (rejected) exit
           if (x<=xu.or.x>=xw) exit
           call transform_potential (norder_v, vcoeff_nat, ucentre, x, vcoeff)
-          call get_ground_state (norder, norder_v, vcoeff, e0, orbcoeff, &
-             &vratio)
+          call get_ground_state (rmass, norder, norder_v, vcoeff, e0, &
+             &orbcoeff, vratio)
           if (MINIMIZE_E) then
             f = e0*x
           else
@@ -599,7 +604,8 @@ CONTAINS
 
         ! Evaluate <x> at this omega and shift ucentre by it.
         call transform_potential (norder_v, vcoeff_nat, ucentre, omega, vcoeff)
-        call get_ground_state (norder, norder_v, vcoeff, e0, orbcoeff, vratio)
+        call get_ground_state (rmass, norder, norder_v, vcoeff, e0, orbcoeff, &
+           &vratio)
         ucentre_prev = ucentre
         ucentre = ucentre_prev - &
            &eval_xpower_expval (norder, orbcoeff, 1)/sqrt(omega)
@@ -648,7 +654,7 @@ CONTAINS
   END SUBROUTINE transform_potential
 
 
-  SUBROUTINE get_ground_state (norder, norder_v, vcoeff, e0, orbcoeff, &
+  SUBROUTINE get_ground_state (rmass, norder, norder_v, vcoeff, e0, orbcoeff, &
      &vratio, all_eigval, all_eigvec)
     !---------------------------------------------------------!
     ! Given a one-dimensional (anharmonic) potential,         !
@@ -674,7 +680,7 @@ CONTAINS
     !---------------------------------------------------------!
     IMPLICIT NONE
     INTEGER, INTENT(in) :: norder, norder_v
-    DOUBLE PRECISION, INTENT(in) :: vcoeff(0:norder_v)
+    DOUBLE PRECISION, INTENT(in) :: rmass, vcoeff(0:norder_v)
     DOUBLE PRECISION, INTENT(inout) :: e0, orbcoeff(0:norder), vratio
     DOUBLE PRECISION, INTENT(inout), OPTIONAL :: all_eigval(0:norder), &
        &all_eigvec(0:norder,0:norder)
@@ -697,21 +703,21 @@ CONTAINS
     DOUBLE PRECISION vircoeff(0:norder_v), xdv_expval, t_expval
     ! Misc local variables.
     INTEGER i, j, k, ierr
-    DOUBLE PRECISION t1, t2
+    DOUBLE PRECISION t1, t2, inv_rmass
 
     ! Get numerical constants to speed up operations.
     log_fact(0:norder) = eval_log_fact( (/ (i, i=0,norder) /) )
+    inv_rmass = 1.d0/rmass
 
     ! Populate Hamiltonian matrix in the basis of harmonic-oscillator
     ! eigenfunctions.
     do i = 0, norder
       hmatrix(i,i) = eval_comb_Gamma (norder_v, i, i, vcoeff, log_fact) + &
-         &INV_SQRT_RMASS * ( dble(i)+0.25d0 - &
+         &inv_rmass * ( dble(i)+0.25d0 - &
          &fourth_root_pi_over_sqrt8*eval_Gamma(i,i,2,log_fact) )
       do j = i+1, norder
         hmatrix(i,j) = eval_comb_Gamma (norder_v, i, j, vcoeff, log_fact) - &
-           &fourth_root_pi_over_sqrt8 * eval_Gamma(i,j,2,log_fact) * &
-           &INV_SQRT_RMASS
+           &fourth_root_pi_over_sqrt8 * eval_Gamma(i,j,2,log_fact) * inv_rmass
         hmatrix(j,i) = hmatrix(i,j)
       enddo ! j
     enddo ! i
@@ -785,7 +791,7 @@ CONTAINS
         t_expval = t_expval + 2.d0*t2*cmatrix(i,0)*cmatrix(j,0)
       enddo ! j
     enddo ! i
-    vratio = 2.d0*t_expval*INV_SQRT_RMASS/xdv_expval
+    vratio = 2.d0*t_expval*inv_rmass/xdv_expval
 
     ! Return ground-state components.
     ! FIXME - if ground state is degenerate, how do we choose which
