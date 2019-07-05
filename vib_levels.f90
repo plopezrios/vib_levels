@@ -301,20 +301,29 @@ CONTAINS
     write(io,'(a)')"set ytics autofreq 0.1"
     write(io,'(a)')"set mytics 2"
     write(io,'(a)')"plot &
-       &'plot.dat' index 3 using 1:2 w l lw 2 lc rgb '#888888' t '', &
-       &'plot.dat' index 4 using 1:2 w l lw 2 lc rgb '#008800' t '', &
-       &'plot.dat' index 5 using 1:2 w l lw 2 lc rgb '#888888' t '', &
-       &'plot.dat' index 6 using 1:2 w l lw 2 lc rgb '#008800' t '', &
-       &'plot.dat' index 7 using 1:2 w l lw 2 lc rgb '#888888' t '', &
-       &'plot.dat' index 8 using 1:2 w l lw 2 lc rgb '#008800' t '', &
-       &'plot.dat' index 9 using 1:2 w l lw 2 lc rgb '#888888' t '', &
-       &'plot.dat' index 10 using 1:2 w l lw 2 lc rgb '#008800' t '', &
-       &'plot.dat' index 1 using 1:3:6 w filledcurve &
+       &'"//trim(pname)//".dat' index 3 using 1:2 w l lw 2 &
+       &lc rgb '#888888' t '', &
+       &'"//trim(pname)//".dat' index 4 using 1:2 w l lw 2 &
+       &lc rgb '#008800' t '', &
+       &'"//trim(pname)//".dat' index 5 using 1:2 w l lw 2 &
+       &lc rgb '#888888' t '', &
+       &'"//trim(pname)//".dat' index 6 using 1:2 w l lw 2 &
+       &lc rgb '#008800' t '', &
+       &'"//trim(pname)//".dat' index 7 using 1:2 w l lw 2 &
+       &lc rgb '#888888' t '', &
+       &'"//trim(pname)//".dat' index 8 using 1:2 w l lw 2 &
+       &lc rgb '#008800' t '', &
+       &'"//trim(pname)//".dat' index 9 using 1:2 w l lw 2 &
+       &lc rgb '#888888' t '', &
+       &'"//trim(pname)//".dat' index 10 using 1:2 w l lw 2 &
+       &lc rgb '#008800' t '', &
+       &'"//trim(pname)//".dat' index 1 using 1:3:6 w filledcurve &
        &  lt 1 lc rgb '#FF0000' fs transparent solid 0.35 t '', &
-       &'plot.dat' index 1 using 1:4:5 w filledcurve &
+       &'"//trim(pname)//".dat' index 1 using 1:4:5 w filledcurve &
        &  lt 1 lc rgb '#FF0000' fs transparent solid 0.35 t '', &
-       &'plot.dat' index 1 using 1:2 w line lw 3 lc rgb '#FF0000' t '', &
-       &'plot.dat' index 0 using 1:2:3 w errorbars &
+       &'"//trim(pname)//".dat' index 1 using 1:2 w line lw 3 &
+       &lc rgb '#FF0000' t '', &
+       &'"//trim(pname)//".dat' index 0 using 1:2:3 w errorbars &
        &  lw 3 lc rgb '#000000' pt 7 ps 0.8 t ''"
     close(io)
     write(6,'(a)')'Made gnuplot '//trim(pname)//'.gpi file and plain-text '//&
